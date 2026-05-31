@@ -26,41 +26,27 @@ public class PdfParserService {
     private static final DateTimeFormatter VALUE_DATE_FORMATTER = DateTimeFormatter.ofPattern("dd MMM yyyy");
 
     // Detects the START of a transaction line
-    // e.g. "30-04-2026 21:00:44 01 May 2026 210043486118 UPI/DR/..."
     private static final Pattern TXN_START = Pattern.compile(
             "^(\\d{2}-\\d{2}-\\d{4})\\s+\\d{2}:\\d{2}:\\d{2}\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})\\s+(\\d+)\\s+(.*)"
     );
 
-    // Extracts amounts from the END of a combined block
-    // e.g. "... 33 631.00 47,596.14"  →  group(2)=amount, group(3)=balance
-    private static final Pattern AMOUNTS_AT_END = Pattern.compile(
-            "\\s+(\\d{1,4})\\s+([\\d,]+\\.\\d{2})\\s+([\\d,]+\\.\\d{2})\\s*$"
-    );
-    
-    // ── Metadata patterns ────────────────────────────────────────────────────
-    private static final Pattern HOLDER_PATTERN = Pattern.compile(
-            "\"?Account Holders? Name[\\s\"]*(?:,|:)?[\\s\"]*([^\"\\n]+)"
-    );
-    private static final Pattern ACCOUNT_NO_PATTERN = Pattern.compile(
-            "\"?Account Number[\\s\"]*(?:,|:)?[\\s\"]*(\\d{6,20})"
-    );
-    private static final Pattern OPENING_BAL_PATTERN = Pattern.compile(
-            "\"?Opening Balance[\\s\"]*(?:,|:)?[\\s\"]*Rs\\.\\s*([\\d,]+\\.\\d{2})"
-    );
-    private static final Pattern CLOSING_BAL_PATTERN = Pattern.compile(
-            "\"?Closing Balance[\\s\"]*(?:,|:)?[\\s\"]*Rs\\.\\s*([\\d,]+\\.\\d{2})"
-    );
-    private static final Pattern DATE_RANGE_PATTERN = Pattern.compile(
-            "\"?Searched By[\\s\"]*(?:,|:)?[\\s\"]*From\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})\\s+To\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})"
+    // Extracts amounts ANYWHERE in the block (removed the $ anchor)
+    private static final Pattern AMOUNTS_PATTERN = Pattern.compile(
+            "\\b(\\d{1,4})\\s+([\\d,]+\\.\\d{2})\\s+([\\d,]+\\.\\d{2})\\b"
     );
 
-    // ── Skip lines that must never be accumulated into a transaction block ───
+    // Extracts Date Range from the header
+    private static final Pattern DATE_RANGE_PATTERN = Pattern.compile(
+            "Searched By.*?From\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})\\s+To\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})"
+    );
+
+    // Skip lines that must never be accumulated into a transaction block
     private static final Pattern SKIP_LINE = Pattern.compile(
             "^(Page\\s+\\d+\\s+of\\s+\\d+|Txn Date|Branch|^Code$|Debit Credit Balance|Disclaimer)",
             Pattern.CASE_INSENSITIVE
     );
 
-    // ── UPI vendor slot: text between 3rd and 4th slash in the description ──
+    // UPI vendor slot: text between 3rd and 4th slash in the description
     private static final Pattern VENDOR_PATTERN = Pattern.compile(
             "UPI/(?:DR|CR)/[^/]+/([^/]+)/"
     );
@@ -133,9 +119,7 @@ public class PdfParserService {
     private Transaction parseTransactionBlock(List<String> block) {
         if (block.isEmpty()) return null;
 
-        String combined = String.join(" ", block)
-                .replaceAll("\\s+", " ")
-                .trim();
+        String combined = String.join(" ", block).replaceAll("\\s+", " ").trim();
 
         try {
             Matcher startMatcher = TXN_START.matcher(combined);
@@ -145,22 +129,28 @@ public class PdfParserService {
             String valueDateStr = startMatcher.group(2);
             String chequeNo     = startMatcher.group(3);
 
-            Matcher amountsMatcher = AMOUNTS_AT_END.matcher(combined);
-            if (!amountsMatcher.find()) {
-                log.warn("Could not extract amounts from: {}",
-                        combined.substring(0, Math.min(80, combined.length())));
+            Matcher amountsMatcher = AMOUNTS_PATTERN.matcher(combined);
+            String amountStr = null;
+            String balanceStr = null;
+            String matchedAmounts = null;
+
+            // In case the description has random numbers, grab the LAST match in the block
+            while (amountsMatcher.find()) {
+                matchedAmounts = amountsMatcher.group(0);
+                amountStr  = amountsMatcher.group(2);
+                balanceStr = amountsMatcher.group(3);
+            }
+
+            if (amountStr == null) {
+                log.warn("Could not extract amounts from: {}", combined.substring(0, Math.min(80, combined.length())));
                 return null;
             }
 
-            String amountStr  = amountsMatcher.group(2);
-            String balanceStr = amountsMatcher.group(3);
-
             int chequeEnd = combined.indexOf(chequeNo) + chequeNo.length();
             String afterCheque = combined.substring(chequeEnd).trim();
-            String description = afterCheque
-                    .replaceAll("\\s+\\d{1,4}\\s+[\\d,]+\\.\\d{2}\\s+[\\d,]+\\.\\d{2}\\s*$", "")
-                    .trim();
 
+            // Clean the description by physically removing the matched amount string
+            String description = afterCheque.replace(matchedAmounts, "").trim();
             boolean isCredit = description.toUpperCase().contains("UPI/CR/");
 
             BigDecimal amount  = parseAmount(amountStr);
@@ -212,7 +202,6 @@ public class PdfParserService {
         if (containsAny(vendor, "BYJU", "UNACADEMY", "COURSERA", "UDEMY", "VEDANTU", "WHITEHAT", "SIMPLILEARN"))
             return "Education";
 
-        // Fallbacks checking the entire raw description
         String descUpper = description.toUpperCase();
 
         if (descUpper.contains("UPI/CR/"))
@@ -224,9 +213,6 @@ public class PdfParserService {
         return "Others";
     }
 
-    /**
-     * Helper method to cleanly check if a string contains ANY of the provided keywords.
-     */
     private boolean containsAny(String text, String... keywords) {
         for (String keyword : keywords) {
             if (text.contains(keyword)) {
@@ -246,12 +232,18 @@ public class PdfParserService {
     private Map<String, String> parseAccountInfo(String page1Text) {
         Map<String, String> info = new HashMap<>();
 
-        info.put("accountHolderName", extractGroup(HOLDER_PATTERN,     page1Text, 1, "N/A"));
-        info.put("accountNumber",     extractGroup(ACCOUNT_NO_PATTERN,  page1Text, 1, "N/A"));
-        info.put("openingBalance",    extractGroup(OPENING_BAL_PATTERN, page1Text, 1, "N/A"));
-        info.put("closingBalance",    extractGroup(CLOSING_BAL_PATTERN, page1Text, 1, "N/A"));
+        // Flatten the entire header into a single, clean sentence
+        String cleanText = page1Text.replaceAll("[\"\r\n,]", " ").replaceAll("\\s+", " ");
 
-        Matcher drm = DATE_RANGE_PATTERN.matcher(page1Text);
+        info.put("accountHolder", extractBetween(cleanText, "Account Holders Name", "Customer Id"));
+        if (info.get("accountHolder") == null) {
+            info.put("accountHolder", extractBetween(cleanText, "Account Holder Name", "Customer Id"));
+        }
+
+        info.put("accountNumber", extractBetween(cleanText, "Account Number", "Account Currency"));
+        info.put("branchName",    extractBetween(cleanText, "Branch Name", "MICR Code"));
+
+        Matcher drm = DATE_RANGE_PATTERN.matcher(cleanText);
         if (drm.find()) {
             info.put("statementFrom", drm.group(1).trim());
             info.put("statementTo",   drm.group(2).trim());
@@ -260,19 +252,21 @@ public class PdfParserService {
             info.put("statementTo",   "N/A");
         }
 
-        log.info("Account info extracted: holder={}, account={}, {} to {}",
-                info.get("accountHolderName"), info.get("accountNumber"),
-                info.get("statementFrom"),     info.get("statementTo"));
-
         return info;
     }
 
-    // ── Utilities ─────────────────────────────────────────────────────────────
+    private String extractBetween(String text, String startLabel, String endLabel) {
+        int startIdx = text.indexOf(startLabel);
+        if (startIdx == -1) return null;
 
-    private String extractGroup(Pattern pattern, String text, int group, String fallback) {
-        Matcher m = pattern.matcher(text);
-        return m.find() ? m.group(group).trim() : fallback;
+        int valStart = startIdx + startLabel.length();
+        int endIdx = text.indexOf(endLabel, valStart);
+
+        if (endIdx == -1) return text.substring(valStart).trim();
+        return text.substring(valStart, endIdx).trim();
     }
+
+    // ── Utilities ─────────────────────────────────────────────────────────────
 
     private LocalDate parseDate(String dateStr, DateTimeFormatter formatter) {
         if (dateStr == null || dateStr.trim().isEmpty()) return null;
