@@ -7,8 +7,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -22,13 +24,6 @@ public class StatementService {
 
     /**
      * Main workflow: Analyze a bank statement PDF
-     *
-     * Flow:
-     * 1. Validate file
-     * 2. Parse PDF → extract transactions
-     * 3. Categorize each transaction
-     * 4. Aggregate data (totals, categories, weekly splits)
-     * 5. Return AnalysisResponse
      */
     public AnalysisResponse analyzeStatement(MultipartFile statementFile) throws IOException {
         log.info("Starting statement analysis for file: {}", statementFile.getOriginalFilename());
@@ -37,16 +32,26 @@ public class StatementService {
         validateFile(statementFile);
 
         try {
-            // Step 1: Parse PDF and extract transactions
-            log.debug("Step 1: Extracting transactions from PDF...");
+            // READ ONCE INTO MEMORY: Because an InputStream can only be read once,
+            // we save it to a byte array so we can pass it to both parsers.
+            byte[] pdfBytes = statementFile.getBytes();
+
+            // Step 1a: Parse PDF and extract transactions
+            log.debug("Step 1a: Extracting transactions from PDF...");
             List<Transaction> transactions = pdfParserService.extractTransactions(
-                    statementFile.getInputStream()
+                    new ByteArrayInputStream(pdfBytes)
             );
 
             if (transactions.isEmpty()) {
                 throw new IOException("No transactions found in the PDF statement");
             }
             log.info("✅ Successfully extracted {} transactions", transactions.size());
+
+            // Step 1b: Extract Account Metadata (FIXED: Actually calling the method now!)
+            log.debug("Step 1b: Extracting account metadata...");
+            Map<String, String> accountInfo = pdfParserService.extractAccountInfo(
+                    new ByteArrayInputStream(pdfBytes)
+            );
 
             // Step 2: Categorize each transaction
             log.debug("Step 2: Categorizing transactions...");
@@ -56,12 +61,15 @@ public class StatementService {
             // Step 3: Aggregate data and create response
             log.debug("Step 3: Aggregating data...");
             AnalysisResponse response = new AnalysisResponse();
-            response.setTransactions(transactions);  // Include raw transactions
+            response.setTransactions(transactions);
 
-            // Extract statement metadata from transactions
-            if (!transactions.isEmpty()) {
-                extractStatementMetadata(transactions, response);
-            }
+            // Map the extracted metadata to the JSON response
+            response.setAccountHolder(accountInfo.get("accountHolder"));
+            response.setAccountNumber(accountInfo.get("accountNumber"));
+            response.setBranchName(accountInfo.get("branchName"));
+
+            // Extract statement dates and opening/closing balances from transactions
+            extractStatementMetadata(transactions, response);
 
             // Perform aggregations (totals, categories, weekly splits)
             aggregationService.aggregateData(transactions, response);
@@ -125,13 +133,11 @@ public class StatementService {
 
         } catch (Exception e) {
             log.warn("Could not extract statement metadata: {}", e.getMessage());
-            // Continue even if metadata extraction fails
         }
     }
 
     /**
      * Generate Excel export from analysis response
-     * Called by controller when user wants to download Excel
      */
     public byte[] getExcelExport(AnalysisResponse analysis) throws IOException {
         log.debug("Generating Excel export...");
@@ -142,18 +148,15 @@ public class StatementService {
      * Validate the uploaded PDF file
      */
     private void validateFile(MultipartFile file) throws IOException {
-        // Check if file exists and not empty
         if (file == null || file.isEmpty()) {
             throw new IOException("File is empty or not provided");
         }
 
-        // Check file extension
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null || !originalFilename.toLowerCase().endsWith(".pdf")) {
             throw new IOException("Only PDF files are supported. Please upload a .pdf file");
         }
 
-        // Check file size (max 50 MB)
         long maxFileSize = 50 * 1024 * 1024; // 50 MB
         if (file.getSize() > maxFileSize) {
             throw new IOException("File size exceeds maximum limit of 50 MB");
