@@ -36,22 +36,22 @@ public class PdfParserService {
     private static final Pattern AMOUNTS_AT_END = Pattern.compile(
             "\\s+(\\d{1,4})\\s+([\\d,]+\\.\\d{2})\\s+([\\d,]+\\.\\d{2})\\s*$"
     );
-
+    
     // ── Metadata patterns ────────────────────────────────────────────────────
     private static final Pattern HOLDER_PATTERN = Pattern.compile(
-            "Account Holders? Name\\s+(.+?)(?=\\s{2,}|[\\r\\n]|Customer Id|$)"
+            "\"?Account Holders? Name[\\s\"]*(?:,|:)?[\\s\"]*([^\"\\n]+)"
     );
     private static final Pattern ACCOUNT_NO_PATTERN = Pattern.compile(
-            "Account Number\\s+(\\d{6,20})"
+            "\"?Account Number[\\s\"]*(?:,|:)?[\\s\"]*(\\d{6,20})"
     );
     private static final Pattern OPENING_BAL_PATTERN = Pattern.compile(
-            "Opening Balance\\s+Rs\\.\\s+([\\d,]+\\.\\d{2})"
+            "\"?Opening Balance[\\s\"]*(?:,|:)?[\\s\"]*Rs\\.\\s*([\\d,]+\\.\\d{2})"
     );
     private static final Pattern CLOSING_BAL_PATTERN = Pattern.compile(
-            "Closing Balance\\s+Rs\\.\\s+([\\d,]+\\.\\d{2})"
+            "\"?Closing Balance[\\s\"]*(?:,|:)?[\\s\"]*Rs\\.\\s*([\\d,]+\\.\\d{2})"
     );
     private static final Pattern DATE_RANGE_PATTERN = Pattern.compile(
-            "Searched By From\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})\\s+To\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})"
+            "\"?Searched By[\\s\"]*(?:,|:)?[\\s\"]*From\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})\\s+To\\s+(\\d{2}\\s+[A-Za-z]+\\s+\\d{4})"
     );
 
     // ── Skip lines that must never be accumulated into a transaction block ───
