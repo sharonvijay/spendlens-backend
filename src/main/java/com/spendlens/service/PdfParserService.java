@@ -38,9 +38,6 @@ public class PdfParserService {
     );
 
     // ── Metadata patterns ────────────────────────────────────────────────────
-    // FIX: use lazy (.+?) + lookahead so it stops at the next field label.
-    // This handles both PDFBox output (newline-separated) and collapsed text
-    // (single-line, space-separated) without grabbing the entire rest of the page.
     private static final Pattern HOLDER_PATTERN = Pattern.compile(
             "Account Holders? Name\\s+(.+?)(?=\\s{2,}|[\\r\\n]|Customer Id|$)"
     );
@@ -58,15 +55,12 @@ public class PdfParserService {
     );
 
     // ── Skip lines that must never be accumulated into a transaction block ───
-    // "Page N of M" is the primary culprit: it appears after the last
-    // transaction on every page and breaks AMOUNTS_AT_END (which anchors to $).
     private static final Pattern SKIP_LINE = Pattern.compile(
-            "^(Page\\s+\\d+\\s+of\\s+\\d+|Txn Date|Branch|^Code$|Disclaimer)",
+            "^(Page\\s+\\d+\\s+of\\s+\\d+|Txn Date|Branch|^Code$|Debit Credit Balance|Disclaimer)",
             Pattern.CASE_INSENSITIVE
     );
 
     // ── UPI vendor slot: text between 3rd and 4th slash in the description ──
-    // e.g. UPI/DR/612167032864/ZOMATO LI/YESB/... → "ZOMATO LI"
     private static final Pattern VENDOR_PATTERN = Pattern.compile(
             "UPI/(?:DR|CR)/[^/]+/([^/]+)/"
     );
@@ -121,8 +115,9 @@ public class PdfParserService {
                 currentBlock.add(line);
 
             } else if (!currentBlock.isEmpty()) {
-                // Skip page footers / column headers — they poison AMOUNTS_AT_END ($)
-                if (SKIP_LINE.matcher(line).find()) continue;
+                if (SKIP_LINE.matcher(line).find()){
+                    continue;
+                }
                 currentBlock.add(line);
             }
         }
@@ -146,9 +141,9 @@ public class PdfParserService {
             Matcher startMatcher = TXN_START.matcher(combined);
             if (!startMatcher.find()) return null;
 
-            String txnDateStr   = startMatcher.group(1); // "30-04-2026"
-            String valueDateStr = startMatcher.group(2); // "01 May 2026"
-            String chequeNo     = startMatcher.group(3); // "210043486118"
+            String txnDateStr   = startMatcher.group(1);
+            String valueDateStr = startMatcher.group(2);
+            String chequeNo     = startMatcher.group(3);
 
             Matcher amountsMatcher = AMOUNTS_AT_END.matcher(combined);
             if (!amountsMatcher.find()) {
@@ -160,7 +155,6 @@ public class PdfParserService {
             String amountStr  = amountsMatcher.group(2);
             String balanceStr = amountsMatcher.group(3);
 
-            // Description = everything between chequeNo and the trailing amounts
             int chequeEnd = combined.indexOf(chequeNo) + chequeNo.length();
             String afterCheque = combined.substring(chequeEnd).trim();
             String description = afterCheque
@@ -191,58 +185,57 @@ public class PdfParserService {
 
     // ── Categorization ────────────────────────────────────────────────────────
 
-    /**
-     * Derive a category from the UPI description.
-     *
-     * UPI descriptions follow a fixed structure:
-     *   UPI/DR/{ref}/{VENDOR}/{BANK}/...
-     *
-     * We extract the vendor slot (between 3rd and 4th slash) and match it
-     * against keyword groups. No hardcoded personal names — only merchant
-     * keywords that are consistent across all Canara Bank UPI transactions.
-     */
     private String categorize(String description) {
         String vendor = extractVendor(description).toUpperCase();
 
-        if (vendor.matches(".*(ZOMATO|SWIGGY|ZEPTO|BLINKIT|DUNZO|SWIGGY|BIGBASKET|GROFERS|JIOMART).*"))
+        if (containsAny(vendor, "ZOMATO", "SWIGGY", "ZEPTO", "BLINKIT", "DUNZO", "BIGBASKET", "GROFERS", "JIOMART"))
             return "Food & Groceries";
 
-        if (vendor.matches(".*(AMAZON|FLIPKART|MYNTRA|MEESHO|NYKAA|AJIO|LEVIS|SNAPDEAL|SHOPSY).*"))
+        if (containsAny(vendor, "AMAZON", "FLIPKART", "MYNTRA", "MEESHO", "NYKAA", "AJIO", "LEVIS", "SNAPDEAL", "SHOPSY"))
             return "Shopping";
 
-        if (vendor.matches(".*(NETFLIX|PRIME VID|HOTSTAR|SPOTIFY|MICROSOFT|YOUTUBE|APPLE|MANORAMA|ZEE5|SONYLIV).*"))
+        if (containsAny(vendor, "NETFLIX", "PRIME VID", "HOTSTAR", "SPOTIFY", "MICROSOFT", "YOUTUBE", "APPLE", "MANORAMA", "ZEE5", "SONYLIV"))
             return "Subscriptions";
 
-        if (vendor.matches(".*(REDBUS|IRCTC|MAKEMYTRIP|GOIBIBO|RAPIDO|OLA|UBER|YATRA|ABHIBUS|IXIGO).*"))
+        if (containsAny(vendor, "REDBUS", "IRCTC", "MAKEMYTRIP", "GOIBIBO", "RAPIDO", "OLA", "UBER", "YATRA", "ABHIBUS", "IXIGO"))
             return "Travel";
 
-        if (vendor.matches(".*(RELIANCE|JIO|AIRTEL|BSNL|VODAFONE|AIR FIBER|TATASKY|DISHTV|ACTFIBER).*"))
+        if (containsAny(vendor, "RELIANCE", "JIO", "AIRTEL", "BSNL", "VODAFONE", "AIR FIBER", "TATASKY", "DISHTV", "ACTFIBER"))
             return "Utilities & Bills";
 
-        if (vendor.matches(".*(PPF|LIC|SBI LIFE|HDFC LIFE|ICICI PRU|MAX LIFE|BAJAJ ALLIANZ|NPS|MUTUAL).*"))
+        if (containsAny(vendor, "PPF", "LIC", "SBI LIFE", "HDFC LIFE", "ICICI PRU", "MAX LIFE", "BAJAJ ALLIANZ", "NPS", "MUTUAL"))
             return "Investments";
 
-        if (vendor.matches(".*(APOLLO|MEDPLUS|NETMEDS|PRACTO|1MG|PHARMEASY|THYROCARE|LENSKART).*"))
+        if (containsAny(vendor, "APOLLO", "MEDPLUS", "NETMEDS", "PRACTO", "1MG", "PHARMEASY", "THYROCARE", "LENSKART"))
             return "Health & Medical";
 
-        if (vendor.matches(".*(BYJU|UNACADEMY|COURSERA|UDEMY|VEDANTU|WHITEHAT|SIMPLILEARN).*"))
+        if (containsAny(vendor, "BYJU", "UNACADEMY", "COURSERA", "UDEMY", "VEDANTU", "WHITEHAT", "SIMPLILEARN"))
             return "Education";
 
-        if (description.toUpperCase().contains("UPI/CR/"))
+        // Fallbacks checking the entire raw description
+        String descUpper = description.toUpperCase();
+
+        if (descUpper.contains("UPI/CR/"))
             return "Income / Received";
 
-        if (description.toUpperCase().contains("EPF") || description.toUpperCase().contains("PPF"))
+        if (descUpper.contains("EPF") || descUpper.contains("PPF"))
             return "Investments";
 
         return "Others";
     }
 
     /**
-     * Extract the vendor name from a UPI description.
-     * "UPI/DR/612167032864/ZOMATO LI/YESB/..." → "ZOMATO LI"
-     * Falls back to the full description if the pattern doesn't match
-     * (e.g. NEFT, IMPS, cheque transactions).
+     * Helper method to cleanly check if a string contains ANY of the provided keywords.
      */
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private String extractVendor(String description) {
         Matcher m = VENDOR_PATTERN.matcher(description);
         return m.find() ? m.group(1).trim() : description;
