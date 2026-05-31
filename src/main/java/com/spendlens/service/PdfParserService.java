@@ -61,7 +61,7 @@ public class PdfParserService {
     // "Page N of M" is the primary culprit: it appears after the last
     // transaction on every page and breaks AMOUNTS_AT_END (which anchors to $).
     private static final Pattern SKIP_LINE = Pattern.compile(
-            "^(Page\\s+\\d+\\s+of\\s+\\d+|Txn Date|Branch\\s*$|Disclaimer)",
+            "^(Page\\s+\\d+\\s+of\\s+\\d+|Txn Date|Branch|^Code$|Disclaimer)",
             Pattern.CASE_INSENSITIVE
     );
 
