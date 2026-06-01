@@ -29,6 +29,9 @@ public class AnalysisResponse {
     private BigDecimal totalIncome;
     private Integer transactionCount;
 
+    // Store the AI's 3-sentence summary
+    private String aiInsights;
+
     // ========== Analysis Results ==========
     private Map<String, BigDecimal> categoryBreakdown;
     private List<WeeklyData> weeklyData;
