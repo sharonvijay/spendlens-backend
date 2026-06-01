@@ -135,6 +135,19 @@ public class StatementController {
     }
 
     /**
+     * POST /api/v1/statements/insights
+     *
+     * Generate AI insights on demand after analysis loads
+     */
+    @PostMapping("/insights")
+    public ResponseEntity<java.util.Map<String, String>> generateInsights(@RequestBody AnalysisResponse analysis) {
+        log.info("✨ Received AI insights request");
+
+        String aiResponse = aiAdvisorService.generateFinancialInsights(analysis);
+        return ResponseEntity.ok(java.util.Map.of("reply", aiResponse));
+    }
+
+    /**
      * GET /api/v1/statements/health
      *
      * Health check endpoint

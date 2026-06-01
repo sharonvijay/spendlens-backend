@@ -21,7 +21,6 @@ public class StatementService {
     private final CategorizationService categorizationService;
     private final AggregationService aggregationService;
     private final ExcelExportService excelExportService;
-    private final AiAdvisorService aiAdvisorService;
 
     /**
      * Main workflow: Analyze a bank statement PDF
@@ -74,9 +73,6 @@ public class StatementService {
 
             // Perform aggregations (totals, categories, weekly splits)
             aggregationService.aggregateData(transactions, response);
-
-            // Generate AI Insights using safe, aggregated data
-            response.setAiInsights(aiAdvisorService.generateFinancialInsights(response));
 
             log.info("✅ Analysis complete!");
             log.info("   • Total Expenses: ₹{}", response.getTotalExpenses());
