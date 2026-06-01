@@ -1,6 +1,8 @@
 package com.spendlens.controller;
 
+import com.spendlens.dto.ChatRequest;
 import com.spendlens.model.AnalysisResponse;
+import com.spendlens.service.AiAdvisorService;
 import com.spendlens.service.StatementService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +25,7 @@ import java.time.format.DateTimeFormatter;
 public class StatementController {
 
     private final StatementService statementService;
+    private final AiAdvisorService aiAdvisorService;
 
     /**
      * POST /api/v1/statements/analyze
@@ -112,6 +115,23 @@ public class StatementController {
             log.error("❌ Error generating Excel export: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    /**
+     * POST /api/v1/statements/chat
+     *
+     * Interactive AI chat over the analyzed transactions
+     */
+    @PostMapping("/chat")
+    public ResponseEntity<java.util.Map<String, String>> chatWithStatement(@RequestBody ChatRequest request) {
+        log.info("💬 Received chat request");
+
+        String aiResponse = aiAdvisorService.answerUserQuestion(
+                request.getQuestion(),
+                request.getTransactions()
+        );
+
+        return ResponseEntity.ok(java.util.Map.of("reply", aiResponse));
     }
 
     /**
